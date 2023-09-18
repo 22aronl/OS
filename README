@@ -1,0 +1,175 @@
+Due date:
+    test: 11/01/2023 @ 11:59pm
+    code: 11/03/2023 @ 11:59pm
+
+Assignment:
+~~~~~~~~~~~
+
+- Implement more system calls
+- Donate a test case
+
+Physical address Space:
+~~~~~~~~~~~~~~~~~~~~~~~
+
+0x00000000 - kConfig.memSize  (DRAM)
+kConfig.ioAPIC - ...+0x000    (the IOPIC device)
+kConfig.localAPIC - ...+0x000 (the LAPIC device)
+
+Virtual Address Space:
+~~~~~~~~~~~~~~~~~~~~~~
+
+0x00001000 - kConfig.memSize   (identity mapped kernel RW)
+0x80000000 - 0xF0000000        (per-process, on demand, user RW)
+0xF0000000 - 0xF0001000        (shared between all user processes)
+kConfig.ioAPIC - ...+0x1000    (identity mapped kernel RW)
+kConfig.localAPIC - ...+0x1000 (identity mapped kernel RW)
+everything else                (no valid mapping)
+
+User code should not be able to access anything outside the user
+range (0x80000000 - 0xF0001000). Any attempt to do so should
+force the faulting process to exit and store the faulting
+address at (0xF0000800)
+
+Details:
+~~~~~~~~
+
+Same as p7 with the following additions/changes.
+
+=== changes ===
+
+- sem, down, up, and sem_close work with process unique descriptors
+
+    * sem() returns a small non-negative integer that uniquely identifies
+      a semaphore within the context of the calling process.
+
+    * children inherit semaphores from their parents
+
+    * a process can have a maximum of 100 active semaphores
+
+- the valid ranges in the user virtual address space are limited to:
+
+    * those that are implied by the program ELF files.
+
+    * the shared frame
+
+    * a 1MB stack ending at 0xF0000000
+
+    * ranges that are explicitly mapped using the mmap system call (see below)
+
+    * any attempt to access virtual addresses outside of those ranges leads
+      to a segmentation violation exception
+
+- handling segmentation violation exceptions:
+
+    * if the user process didn't register a signal handler (default), forces
+      the process to exit with code 139
+
+    * if the user process registered a signal handler (see below) then that
+      handler is invoked (in user mode) as follows:
+
+         handler(1, the_faulting_virtual_address)
+
+    * the signal handler can end its execution using one of 3 methods:
+
+        (1) invoke the 'sigreturn()' system call, asking the kernel to resume
+            execution of the process (retries the faulting instruction)
+
+        (2) invoke 'exit(code)', forces the user process to exit
+
+        (3) invoke 'shutdown()', terminates the kernel
+
+=== additions ===
+
+- [1004] simple_signal(void (*handler)(int, unsigned int))
+
+    * a simplification of the Unix signal system call.
+
+    * gives a user process a chance to handle its own exceptions by
+      registering a user space handler
+
+    * the only exception we handle is 'segmentation violation' as above
+
+- [1005] void* simple_mmap(void* addr, unsigned size)
+
+    * a simplification of the Unix mmap system call
+    * creates a lazily loaded, zero-filled region in the calling process 
+      virtual address space
+    * returns the mapped virtual address on success
+    * returns 0 on failure
+    * fails if any of the following is true:
+        . addr is not page aligned
+        . size is not page aligned
+        . the desired region is not fully accessible in user mode
+        . the desired region intersects with an existing mapping
+    * the mapped region will be of the given 'size'
+    * if 'addr' is 0, does a first-fit search in the user accessible portion
+      of the process virtual address space. Returns the allocated virtual
+      address
+    * if 'addr' is not zero, the mapped region starts at the given 'addr'
+
+- [1006] void sigreturn()
+
+    * called from a signal handler to resume normal execution of the process
+    * does nothing if called from outside a signal handler
+
+- [1007] int sem_close(int sem)
+
+    * return -1 if sem doesn't refer to a valid semaphore; one that was
+      either created by the calling process of inherited from a parent
+    * marks the semaphore as being invalid for the calling process. Other
+      processes can continue to use it
+    * should garbage collect a semaphore when all processes that have access
+      to it either exit or close it
+
+- [1008] int simple_munmap(void* addr)
+
+    * a simplification of Unix munmap
+    * marks the region containing 'addr' as invalid and frees its resources
+    * fails if any of the following is true:
+        - addr is outside the process private range (0x80000000-0xF0000000)
+        - addr is not in the middle of a previously mapped region
+    * return 0 on success and -1 on failure
+
+
+Files:
+~~~~~~
+
+- kernel/          contains the kernel files
+
+- <test>.dir/      the contents of the root disk
+
+- <test>.dir/sbin
+    init.c         ... init source
+    libc.c/libc.h  ... minimal libc implementation
+    sys.S/sys.h    ... user-side system calls
+    init           ... the ELF init file packaged in t0.img
+
+For Makefile help:
+~~~~~~~~~~~~~~~~~~
+
+    make help
+
+To run test:
+~~~~~~~~~~~~
+
+    make -s clean test
+
+To run one test:
+~~~~~~~~~~~~~~~~
+
+    make -s t0.test
+
+To make the output more noisy:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    make clean test
+
+To run by hand
+~~~~~~~~~~~~~~
+
+    ./run_qemu t0
+
+To attach with gdb
+~~~~~~~~~~~~~~~~~~
+
+    ./debug_qemu t0

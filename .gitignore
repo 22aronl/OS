@@ -1,0 +1,16 @@
+.nfs*
+*.data
+*.time
+*.failure
+*.raw
+*.out
+*.result
+*.diff
+*.d
+disks/
+all_tests/
+all_results/
+my_results/
+my_submission/
+history
+qemu.log

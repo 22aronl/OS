@@ -1,0 +1,5 @@
+- Why is it a good idea to use descriptors?
+
+- What happens if a signal handler doesn't call sigreturn? Propose a
+  design that automatically performs sigreturn if a signal handler returns
+

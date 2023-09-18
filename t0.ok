@@ -1,0 +1,18 @@
+*** (1) checking normal exit
+*** child1
+*** parent1 42
+*** (2) checking segmentation violation
+*** child2
+*** parent2 139
+*** va2 666
+*** (3) checking preemption
+*** child3
+*** parent3 777
+*** (4) checking semaphores
+*** s = 0
+*** child4
+*** parent4, rc=0
+*** parent4, join=0
+*** parent4, bad sem descriptor -> -1
+*** parent4, first sem_close(0) -> 0
+*** parent4, second sem_close(0) -> -1
