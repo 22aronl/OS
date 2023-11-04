@@ -59,11 +59,13 @@ spuriousHandler_:
     .global apitHandler_
 apitHandler_:
     // TODO: XMM, MMX, FP, ...
+    pushf
     pusha
     push %esp
     call apitHandler
     pop %esp
     popa
+    add $4, %esp
     iret
 
     .global sti
@@ -172,13 +174,34 @@ switchToUser:
         pushl %ecx              # user EIP
         iret
 
+    #switchToUserWithParams(uint32_t pc, uint32_t esp, uint32_t arg1, uint32_t arg2);
+        .global switchToUserWithParams
+switchToUserWithParams:
+        mov 4(%esp),%ecx        # pc
+        mov 8(%esp),%ebx        # esp
+        mov 12(%esp),%eax       # arg1
+        mov %eax, -8(%ebx)
+        mov 16(%esp), %eax      # arg2
+        mov %eax, -4(%ebx)
+        sub $12, %ebx
+
+        pushl userSS            # user SS
+        pushl %ebx              # user ESP
+        pushf                   # ring 3 flags
+        orl $0x200,(%esp)       # enable interrupts
+        pushl userCS            # user CS
+        pushl %ecx              # user EIP
+        iret
+
 	.global sysHandler_
 sysHandler_:
+        pushf
+        pusha
         push %esp
         push %eax
         .extern sysHandler
         call sysHandler
-        add $8,%esp
+        add $44,%esp
         iret
 
 /* invlpg(uint32_t va) */
@@ -190,6 +213,7 @@ invlpg:
 
     .global pageFaultHandler_
 pageFaultHandler_:
+    pushf
     pusha
 
     mov %esp,%eax
@@ -203,6 +227,7 @@ pageFaultHandler_:
     add $8,%esp    /* pop arguments */
 
     popa
+    popf
 
     add $4,%esp   /* pop error */
     iret
@@ -224,3 +249,49 @@ getCR3:
     mov %cr3,%eax
     ret
 
+    /* return_to_process_(uint32_t eax, uint32_t* loc); */
+    .global return_to_process_
+return_to_process_:
+
+    movl 8(%esp), %edi
+
+    movl 4(%edi), %eax
+    movl 8(%edi), %ecx
+    movl 12(%edi), %edx
+    movl 16(%edi), %ebx
+    movl 24(%edi), %ebp
+    movl 28(%edi), %esi
+
+    add $4, %esp
+    pop %eax
+
+    pushl userSS
+    pushl 20(%edi)
+    push 36(%edi)
+    orl $0x200, (%esp)
+    pushl userCS
+    pushl (%edi)
+    movl 32(%edi), %edi
+    iret
+
+    /* void return_to_process_(uint32_t* loc, uint32_t eax)
+    .global return_to_process_with_val_
+return_to_process_with_val_:
+    
+    movl 8(%esp), %eax
+
+    movl 4(%esp), %edi
+    push %eax
+    
+    push 20(%edi)
+    push (%edi)
+
+    movl 8(%edi), %ecx
+    movl 12(%edi), %edx
+    movl 16(%edi), %ebx
+    movl 24(%edi), %ebp
+    movl 28(%edi), %esi
+    movl 32(%edi), %edi
+
+    call switchToUser
+    ret */

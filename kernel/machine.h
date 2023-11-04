@@ -45,6 +45,7 @@ extern "C" void cpuid(uint32_t eax, cpuid_out* out);
 extern void pause();
 
 extern "C" void switchToUser(uint32_t pc, uint32_t esp, uint32_t eax);
+extern "C" void switchToUserWithParams(uint32_t pc, uint32_t esp, uint32_t arg1, uintptr_t arg2);
 
 extern "C" void ltr(uint32_t);
 
@@ -52,6 +53,9 @@ extern uint32_t tssDescriptorBase;
 extern uint32_t kernelSS;
 
 extern "C" void sysHandler_(void);
+
+extern "C" void return_to_process_(uint32_t eax, uint32_t* loc);
+// extern "C" void return_to_process_with_val_(uint32_t* loc, uint32_t eax);
 
 
 #endif

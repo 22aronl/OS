@@ -56,7 +56,7 @@
     }
 
     void event_loop() {
-        //Debug::printf("| core#%d entring event_loop\n", SMP::me());
+        // Debug::printf("| core#%d entring event_loop\n", SMP::me());
         while(true) {
             while (true) {
                 auto e = impl::pq.remove_if_ready();

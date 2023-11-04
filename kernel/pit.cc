@@ -1,8 +1,9 @@
 #include "pit.h"
 #include "debug.h"
-#include "machine.h"
 #include "idt.h"
+#include "machine.h"
 #include "smp.h"
+#include "vmm.h"
 
 /*
  * The old PIT runs at a fixed frequency of 1193182Hz but doesn't support
@@ -25,14 +26,13 @@
 constexpr uint32_t PIT_FREQ = 1193182;
 
 /* Were we want the APIT to iunterrupt us */
-constexpr uint32_t APIT_vector = 40; 
+constexpr uint32_t APIT_vector = 40;
 
 uint32_t Pit::jiffiesPerSecond = 0;
 uint32_t Pit::apitCounter = 0;
 volatile uint32_t Pit::jiffies = 0;
 
-struct PitInfo {
-};
+struct PitInfo {};
 
 static PitInfo *pitInfo = nullptr;
 
@@ -55,35 +55,33 @@ void Pit::calibrate(uint32_t hz) {
     // Why 20Hz? becasue the PIT has a fixed frequency of 1193182Hz
     // and a 16 bit divider, 20Hz will require a divider of 59658 which
     // we can fit in 16 bits
-    
 
     SMP::apit_lvt_timer.set(0x00010000); // oneshot, masked, ...
-    SMP::apit_divide.set(0x0000000B); // divide by 1
+    SMP::apit_divide.set(0x0000000B);    // divide by 1
 
     // Now let's program the PIT to compute the frequency
-    Debug::printf("| pitInit freq %dHz\n",hz);
+    Debug::printf("| pitInit freq %dHz\n", hz);
     uint32_t d = PIT_FREQ / 20;
 
     if ((d & 0xffff) != d) {
-        Debug::printf("| pitInit invalid divider %d\n",d);
+        Debug::printf("| pitInit invalid divider %d\n", d);
         d = 0xffff;
     }
-    Debug::printf("| pitInit divider %d\n",d);
+    Debug::printf("| pitInit divider %d\n", d);
 
     uint32_t initial = 0xffffffff;
     SMP::apit_initial_count.set(initial);
 
-    outb(0x61,1);          // speaker off, gate on
+    outb(0x61, 1); // speaker off, gate on
 
-    outb(0x43,0b10110110); //  10 -> channel#2
-                           //  11 -> lobyte/hibyte
-                           // 011 -> square wave generator
-                           //   0 -> count in binary
-
+    outb(0x43, 0b10110110); //  10 -> channel#2
+                            //  11 -> lobyte/hibyte
+                            // 011 -> square wave generator
+                            //   0 -> count in binary
 
     // write the divider to the PIT
-    outb(0x42,d);
-    outb(0x42,d >> 8);
+    outb(0x42, d);
+    outb(0x42, d >> 8);
 
     uint32_t last = inb(0x61) & 0x20;
     uint32_t changes = 0;
@@ -91,24 +89,24 @@ void Pit::calibrate(uint32_t hz) {
     // square-wave generator mode. So, the state is
     // really changing at 40Hz and we should loop
     // for 40 iterations if we want to wait for a second
-    // 
-    while(changes < 40) {
+    //
+    while (changes < 40) {
         uint32_t t = inb(0x61) & 0x20;
         if (t != last) {
-            changes ++;
+            changes++;
             last = t;
         }
     }
-    
+
     uint32_t diff = initial - SMP::apit_current_count.get();
 
     // stop the PIT
-    outb(0x61,0);
+    outb(0x61, 0);
 
-    Debug::printf("| APIT running at %uHz\n",diff);
+    Debug::printf("| APIT running at %uHz\n", diff);
     apitCounter = diff / hz;
     jiffiesPerSecond = hz;
-    Debug::printf("| APIT counter=%d for %dHz\n",apitCounter,hz);
+    Debug::printf("| APIT counter=%d for %dHz\n", apitCounter, hz);
 
     // Register the APIT interrupt handler
     IDT::interrupt(APIT_vector, (uint32_t)apitHandler_);
@@ -124,21 +122,66 @@ void Pit::init() {
 
     // The following line will enable timer interrupts for this CPU
     // You better be prepared for it
-    SMP::apit_lvt_timer.set(
-        (1 << 17) |      // Timer mode: 1 -> Periodic
-        0 << 16   |      // mask: 0 -> interrupts not masked
-        APIT_vector      // the interrupt vector
+    SMP::apit_lvt_timer.set((1 << 17) | // Timer mode: 1 -> Periodic
+                            0 << 16 |   // mask: 0 -> interrupts not masked
+                            APIT_vector // the interrupt vector
     );
-        
+
     // Let's go
     SMP::apit_initial_count.set(apitCounter);
 }
 
-extern "C" void apitHandler(uint32_t* things) {
+extern uint32_t userCS;
+extern uint32_t kernelCS;
+
+extern "C" void apitHandler(uint32_t *things) {
     // interrupts are disabled.
     auto id = SMP::me();
     if (id == 0) {
         Pit::jiffies = Pit::jiffies + 1;
     }
     SMP::eoi_reg.set(0);
+    // things[0] = top of pusha
+    // things[7] = end of pusha
+    // thigns[8] = eip
+    // things[9] = CS
+    if (things[10] == kernelCS) {
+        // Debug::printf("kernel preemption\n");
+        VMM::user_preemption[id] = true;
+    } else if (things[10] == userCS) {
+        auto cur_pcb = VMM::pcb_table[id];
+        // Debug::printf("user preemption %d\n", cur_pcb->is_in_sig_handler);
+        cur_pcb->store_registers(things[9], things[12], things);
+        // auto registers = cur_pcb->registers;
+        // registers[0] = things[8];
+        // registers[1] = things[7];
+        // registers[2] = things[6];
+        // registers[3] = things[5];
+        // registers[4] = things[4];
+        // registers[5] = things[11];
+        // registers[6] = things[2];
+        // registers[7] = things[1];
+        // registers[8] = things[0];
+
+        // for(int i = 0; i < 9; i++)
+        //     Debug::printf("before return at %d, %d\n", i, cur_pcb->registers[i]);
+        // Debug::printf("before %x %x\n", things[9], things[12]);
+
+        go([cur_pcb]() {
+            // Debug::printf("preemption switch back %d\n", cur_pcb->is_in_sig_handler);
+            VMM::pcb_table[SMP::me()] = cur_pcb;
+            vmm_on(cur_pcb->vmm_pd);
+            // for(int i = 0; i < 9; i++)
+            //     Debug::printf("after return at %d, %d\n", i, cur_pcb->registers[i]);
+            // Debug::printf("after %x %x\n", cur_pcb->registers[0], cur_pcb->registers[5]);
+            if(cur_pcb->is_in_sig_handler)
+                cur_pcb->return_to_process(cur_pcb->sig_registers[1]);
+            cur_pcb->return_to_process(cur_pcb->registers[1]);
+        });
+        event_loop();
+    } else {
+        Debug::panic("Unknown cs given %x\n", things[10]);
+    }
+    // Debug::panic("user cs %d, %d %d %d %d %d\n", things[12], things[13], things[8], things[9],
+    // userCS, kernelCS);
 }
