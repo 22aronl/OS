@@ -1,6 +1,6 @@
 Due date:
-    test: 11/01/2023 @ 11:59pm
-    code: 11/03/2023 @ 11:59pm
+    test: 11/08/2023 @ 11:59pm
+    code: 11/10/2023 @ 11:59pm
 
 Assignment:
 ~~~~~~~~~~~
@@ -33,102 +33,93 @@ address at (0xF0000800)
 Details:
 ~~~~~~~~
 
-Same as p7 with the following additions/changes.
+Same as p8 with the following additions/changes.
 
 === changes ===
 
-- sem, down, up, and sem_close work with process unique descriptors
+- [1005] void* simple_mmap(void* addr, unsigned size, int fd, unsigned offset)
 
-    * sem() returns a small non-negative integer that uniquely identifies
-      a semaphore within the context of the calling process.
+    * same behavior as p8 if fd == -1, otherwise
+    * if offset is not page aligned, fail and return 0
+    * if fd does not refer to an valid file descriptor, fail and return 0
+    * create a private virtual mapping as in p8 but fill it with the
+      contents of the file starting at 'offset'
+    * if size > (len(file)-offset) then fill the rest with zero
 
-    * children inherit semaphores from their parents
-
-    * a process can have a maximum of 100 active semaphores
-
-- the valid ranges in the user virtual address space are limited to:
-
-    * those that are implied by the program ELF files.
-
-    * the shared frame
-
-    * a 1MB stack ending at 0xF0000000
-
-    * ranges that are explicitly mapped using the mmap system call (see below)
-
-    * any attempt to access virtual addresses outside of those ranges leads
-      to a segmentation violation exception
-
-- handling segmentation violation exceptions:
-
-    * if the user process didn't register a signal handler (default), forces
-      the process to exit with code 139
-
-    * if the user process registered a signal handler (see below) then that
-      handler is invoked (in user mode) as follows:
-
-         handler(1, the_faulting_virtual_address)
-
-    * the signal handler can end its execution using one of 3 methods:
-
-        (1) invoke the 'sigreturn()' system call, asking the kernel to resume
-            execution of the process (retries the faulting instruction)
-
-        (2) invoke 'exit(code)', forces the user process to exit
-
-        (3) invoke 'shutdown()', terminates the kernel
+- signal handlers don't have to call sigreturn() directly. A handler that
+  returns behaves as if it called sigreturn().
 
 === additions ===
 
-- [1004] simple_signal(void (*handler)(int, unsigned int))
+- File descriptors
 
-    * a simplification of the Unix signal system call.
+    * A process can have up to 10 open file descriptor (0 .. 9)
+    * file descriptors are inherited on fork and preserved across exec
+    * kernelInit initializes the file descriptors for the first process
+      as follows:
 
-    * gives a user process a chance to handle its own exceptions by
-      registering a user space handler
+         - 0: all read/write attempts fail (return -1)
+         - 1: reads fail, writes go to the terminal
+         - 2: reads fail, writes go to the terminal
 
-    * the only exception we handle is 'segmentation violation' as above
+- [1020] void chdir(char* path)
 
-- [1005] void* simple_mmap(void* addr, unsigned size)
+    * changes the current working directory of the calling process to 'path'
+    * path doesn't have to be valid
+    * CWD is initialized to '/'
 
-    * a simplification of the Unix mmap system call
-    * creates a lazily loaded, zero-filled region in the calling process 
-      virtual address space
-    * returns the mapped virtual address on success
-    * returns 0 on failure
-    * fails if any of the following is true:
-        . addr is not page aligned
-        . size is not page aligned
-        . the desired region is not fully accessible in user mode
-        . the desired region intersects with an existing mapping
-    * the mapped region will be of the given 'size'
-    * if 'addr' is 0, does a first-fit search in the user accessible portion
-      of the process virtual address space. Returns the allocated virtual
-      address
-    * if 'addr' is not zero, the mapped region starts at the given 'addr'
+- [1021] int open(char* path)
 
-- [1006] void sigreturn()
+    * path could either be absolute of relative
+    * opens the file at the given path and returns the lowest available
+      descriptor
+    * all errors returns -1 (path not valid, path not found, no available
+      file descriptors)
+    * it is legal to open a directory
 
-    * called from a signal handler to resume normal execution of the process
-    * does nothing if called from outside a signal handler
+- [1022] int close(fd)
 
-- [1007] int sem_close(int sem)
+    * closes the given file descriptor
+    * returns 0 on success and -1 on failure
 
-    * return -1 if sem doesn't refer to a valid semaphore; one that was
-      either created by the calling process of inherited from a parent
-    * marks the semaphore as being invalid for the calling process. Other
-      processes can continue to use it
-    * should garbage collect a semaphore when all processes that have access
-      to it either exit or close it
+- [1023] int len(fd)
 
-- [1008] int simple_munmap(void* addr)
+    * returns the length (in bytes) of the file referred to by fd
+    * return -1 on failure
 
-    * a simplification of Unix munmap
-    * marks the region containing 'addr' as invalid and frees its resources
-    * fails if any of the following is true:
-        - addr is outside the process private range (0x80000000-0xF0000000)
-        - addr is not in the middle of a previously mapped region
+- [1024] int n = read(fd, void* buffer, unsigned count)
+
+    * reads up to 'count' bytes from a file into buffer
+    * failures are indicated by n == -1
+        - buffer is not a valid user-accessible virtual address
+        - fd doesn't refer to a readable file
+    * n == 0 iff at end of file or count == 0
+    * otherwise 0 < n <= count
+
+- [1025] int n = write(fd, void* buffer, unsigned count)
+
+    * writes up to 'count' bytes from buffer to the indicated file
+    * failures are indicated by n == -1
+        - buffer is not a valid user-accessible virtual address
+        - fd doesn't refer to a writable file
+    * n == 0 iff count == 0
+    * otherwise, 0 < n <= count
+
+- [1026] int rc = pipe(int* write_fd, int* read_fd)
+
+    * creates an in-kernel bounded buffer of size 100 bytes
     * return 0 on success and -1 on failure
+    * writing to *write_fd stores bytes in the bounded buffer
+    * reading from *read_fd retrieves bytes from the bounded buffer
+    * reading from *write_fd should fail
+    * writing to *read_fd should fail
+
+- [1027] int kill(unsigned v)
+
+    * sends signal #2 to the youngest child
+    * if the child has a handler then 'v' is passed as the 'arg'
+    * if the child doesn't have a handler, then it is forced to
+      exit with status 'v'
 
 
 Files:
