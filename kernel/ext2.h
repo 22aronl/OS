@@ -207,6 +207,10 @@ class Ext2 {
             return nullptr;
         }
 
+        if(name[0] == '\0') {
+            return dir;
+        }
+
         if (!dir->is_dir())
             return nullptr;
 

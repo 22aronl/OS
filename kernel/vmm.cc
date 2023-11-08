@@ -234,6 +234,9 @@ extern "C" void vmm_pageFault(uintptr_t va_, uintptr_t *saveState) {
     // for (uint32_t i = 0; i < 11; i++) {
     //     Debug::printf("vmm %d val %x\n", i, saveState[i]);
     // }
+    if(va_ == 0xF0002000) {
+        sigreturn();
+    }
 
     if (VMM::pcb_table[SMP::me()]->find_exist_VME(va_)) {
         // Debug::printf("soft page fault\n");

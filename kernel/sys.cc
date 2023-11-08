@@ -6,6 +6,7 @@
 #include "physmem.h"
 #include "stdint.h"
 
+#include "bb.h"
 #include "config.h"
 #include "elf.h"
 #include "ext2.h"
@@ -24,6 +25,21 @@ void exit(uint32_t *userEsp) {
     VMM::temporary_vmm_mapping();
     // Debug::printf("finish exit\n");
     event_loop();
+}
+
+void sigreturn() {
+    if (VMM::pcb_table[SMP::me()]->is_in_sig_handler) {
+        auto cur_pcb = VMM::pcb_table[SMP::me()];
+        go([cur_pcb] {
+            VMM::pcb_table[SMP::me()] = cur_pcb;
+            VMM::pcb_table[SMP::me()]->is_in_sig_handler = false;
+            vmm_on(cur_pcb->vmm_pd);
+            // Debug::printf("returnign to process\n");
+            cur_pcb->return_to_process(cur_pcb->registers[1]);
+        });
+        // VMM::pcb_table[SMP::me()]->return_to_process(VMM::pcb_table[SMP::me()]->registers[1]);
+        event_loop();
+    }
 }
 
 extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
@@ -114,9 +130,16 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1000: {
         // Debug::printf("EXECLING\n");
-        Node *node = file_system->find_absolute((char *)userEsp[1]);
+        Node* node;
+        if(((char*)userEsp[1])[0] == '/')
+            node = file_system->find_absolute((char *)userEsp[1]);
+        else
+            node = file_system->find_relative(VMM::pcb_table[SMP::me()]->cur_path, (char *)userEsp[1]);
+
+
         if (node == nullptr || !node->is_file())
             return -1;
+
         uint32_t size = 2;
         while (userEsp[size] != 0)
             size++;
@@ -238,39 +261,36 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         // Debug::printf("simple mmap\n");
         uint32_t addr = userEsp[1];
         uint32_t size = userEsp[2];
+        int fd = userEsp[3];
+        uint32_t offset = userEsp[4];
 
         if (addr == 0) {
             if ((size & 0xFFF) != 0 || size > 0xF0000000 - 0x80000000 || size == 0)
                 return 0;
-            auto k = VMM::pcb_table[SMP::me()]->find_space_VME(size);
+            addr = VMM::pcb_table[SMP::me()]->find_space_VME(size);
             // Debug::printf("space foudn at %x\n", k);
-
-            return k;
         }
         // Debug::printf("addr %x size %x addr + size %x\n", addr, size, addr + size);
         if ((addr & 0xFFF) != 0 || (size & 0xFFF) != 0 || addr + size > 0xF0000000 ||
             (addr + size < 0x80000000))
             return 0;
 
-        if (VMM::pcb_table[SMP::me()]->add_new_VME(addr, size))
+        if (!VMM::pcb_table[SMP::me()]->add_new_VME(addr, size))
+            return 0;
+        
+        if(fd == -1)
             return addr;
-        return 0;
+            
+        if ((offset & 0xFFF) != 0)
+            return 0;
+
+        return VMM::pcb_table[SMP::me()]->file_mmap(addr, size, fd, offset);
+
         break;
     }
     case 1006: { // void sigreturn()
         // Debug::printf("SIG RETURN\n");
-        if (VMM::pcb_table[SMP::me()]->is_in_sig_handler) {
-            auto cur_pcb = VMM::pcb_table[SMP::me()];
-            go([cur_pcb] {
-                VMM::pcb_table[SMP::me()] = cur_pcb;
-                VMM::pcb_table[SMP::me()]->is_in_sig_handler = false;
-                vmm_on(cur_pcb->vmm_pd);
-                // Debug::printf("returnign to process\n");
-                cur_pcb->return_to_process(cur_pcb->registers[1]);
-            });
-            // VMM::pcb_table[SMP::me()]->return_to_process(VMM::pcb_table[SMP::me()]->registers[1]);
-            event_loop();
-        }
+        sigreturn();
         break;
     }
     case 1007: { // int sem_close(int sem)
@@ -290,6 +310,92 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         vmm_on(VMM::pcb_table[SMP::me()]->vmm_pd);
         delete vme;
         return 0;
+    }
+    case 1020: { // void chdir(char* path)
+        char *path = (char *)userEsp[1];
+        VMM::pcb_table[SMP::me()]->update_path(path);
+        break;
+    }
+    case 1021: { // int open(char* path)
+        char *path = (char *)userEsp[1];
+        return VMM::pcb_table[SMP::me()]->open(path);
+    }
+    case 1022: { // int close(fd)
+        int fd = userEsp[1];
+        return VMM::pcb_table[SMP::me()]->close(fd);
+    }
+    case 1023: { // int len(fd)
+        int fd = userEsp[1];
+        return VMM::pcb_table[SMP::me()]->len(fd);
+    }
+    case 1024: { // int n = read(fd, void* buffer, unsigned count)
+        int fd = userEsp[1];
+        void *buffer = (void *)userEsp[2];
+        uint32_t count = userEsp[3];
+
+        auto cur_pcb = VMM::pcb_table[SMP::me()];
+        FileDescriptor file = cur_pcb->fd_table[fd];
+        uint8_t perm = file.permissions;
+        if (!(perm & 0b11) || in_userspace((uint32_t)buffer) ||
+            in_userspace((uint32_t)buffer + count))
+            return -1;
+
+        cur_pcb->store_registers(userEip[0], userEip[3], userRegs);
+
+        // TODO: add segfault handler case in user for buffer in VMM seg handler
+        if (perm & 0b1000) { // if is file
+            int64_t val = ((Node *)file.node)->read_all(file.offset, 1, (char *)buffer);
+            file.offset += 1;
+            return val;
+        } else {
+            ((BoundedBuffer<void *> *)file.node)->get([cur_pcb, buffer](auto v) {
+                VMM::pcb_table[SMP::me()] = cur_pcb;
+                vmm_on(cur_pcb->vmm_pd);
+                ((void **)buffer)[0] = v;
+                cur_pcb->return_to_process(1);
+            });
+            event_loop();
+            // return -1;
+        }
+    }
+    case 1025: { // int n = write(fd, void* buffer, unsigned count)
+        int fd = userEsp[1];
+        void *buffer = (void *)userEsp[2];
+        uint32_t count = userEsp[3];
+
+        auto cur_pcb = VMM::pcb_table[SMP::me()];
+        FileDescriptor file = cur_pcb->fd_table[fd];
+        uint8_t perm = file.permissions;
+        if (!(perm & 0b101) || in_userspace((uint32_t)buffer) ||
+            in_userspace((uint32_t)buffer + count))
+            return -1;
+
+        if (count == 0)
+            return 0;
+
+        if (perm & 0b010000) {
+            Debug::printf("%c", ((char *)userEsp[2])[0]);
+            return 1;
+        } else {
+            ((BoundedBuffer<void *> *)file.node)->put((((void **)userEsp[2])[0]), [cur_pcb]() {
+                VMM::pcb_table[SMP::me()] = cur_pcb;
+                vmm_on(cur_pcb->vmm_pd);
+                cur_pcb->return_to_process(1);
+            });
+            event_loop();
+        }
+    }
+    case 1026: { // int rc = pipe(int* write_fd, int* read_fd)
+        int *write_fd = (int *)userEsp[1];
+        int *read_fd = (int *)userEsp[2];
+        return VMM::pcb_table[SMP::me()]->pipe(write_fd, read_fd);
+    }
+    case 1027: { // int kill(unsigned v)
+        Debug::panic("*** KILL NOT IMPLMENTEd\n");
+    }
+    case 1028: { // int dup(int fd)
+        int fd = userEsp[1];
+        return VMM::pcb_table[SMP::me()]->dup(fd);
     }
     default:
         Debug::panic("syscall %d\n", eax);

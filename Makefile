@@ -4,7 +4,7 @@ UTCS_ID ?= $(shell pwd | sed -e 's/.*_//')
 
 MY_TESTS = ${addprefix ${UTCS_ID},${TEST_EXTS}}
 
-TESTS_DIR ?= .
+TESTS_DIR ?= ./all_tests
 
 POSSIBLE_TESTS = ${notdir ${basename ${wildcard ${TESTS_DIR}/*${firstword ${TEST_EXTS}}}}}
 TESTS = ${sort ${POSSIBLE_TESTS}}
@@ -30,7 +30,7 @@ QEMU_ACCEL ?= tcg,thread=multi
 QEMU_CPU ?= max
 QEMU_SMP ?= 1
 QEMU_MEM ?= 128m
-QEMU_TIMEOUT ?= 10
+QEMU_TIMEOUT ?= 5
 QEMU_TIMEOUT_CMD ?= timeout
 
 QEMU_PREFER = ~gheith/public/qemu_5.1.0/bin/qemu-system-i386

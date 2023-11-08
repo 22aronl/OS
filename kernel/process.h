@@ -3,9 +3,13 @@
 #define _PROCESS_H_
 
 #include "atomic.h"
+#include "bb.h"
+#include "ext2.h"
 #include "future.h"
+#include "kernel.h"
 #include "machine.h"
 #include "stdint.h"
+// #include "vmm.h"
 
 class ChildrenExitCode {
   public:
@@ -71,6 +75,17 @@ class VME {
         : addr(addr), size(size), left(left), right(right) {}
 };
 
+class FileDescriptor {
+  public:
+    uint8_t permissions; // is_input[5], is_output[4], is_file [3], is_writable [2], is_readable
+                         // [1], is_valid[0]
+    uintptr_t node;
+    uint32_t offset;
+    FileDescriptor() : permissions(0), node(0), offset(0) {}
+    FileDescriptor(uintptr_t node, uint8_t permissions)
+        : permissions(permissions), node(node), offset(0) {}
+};
+
 class ProcessControlBlock {
   public:
     uint32_t vmm_pd;
@@ -85,10 +100,14 @@ class ProcessControlBlock {
     bool is_in_sig_handler;
     uint32_t sem_index;
     VME *head;
+    Node *current_node;
+    FileDescriptor fd_table[10];
+    Node *cur_path;
+    bool is_kill;
 
     ProcessControlBlock(uint32_t vmm_pd, ProcessControlBlock *parent)
         : vmm_pd(vmm_pd), parent(parent), children(nullptr), sig_handler(0),
-          is_in_sig_handler(false) {
+          is_in_sig_handler(false), is_kill(false) {
         exit_code = new Future<uint32_t>();
         if (parent != nullptr) {
             parent->add_child(exit_code);
@@ -98,12 +117,141 @@ class ProcessControlBlock {
             this->is_in_sig_handler = parent->is_in_sig_handler;
             this->sig_handler = parent->sig_handler;
             this->num_semaphores = parent->num_semaphores;
+            this->cur_path = parent->cur_path;
+            copy_fd_table(parent);
         } else {
             this->sem_holder = nullptr;
             sem_index = 0;
             head = nullptr;
             this->num_semaphores = 0;
+            if (file_system != nullptr)
+                this->cur_path = file_system->root;
+
+            fd_table[0].permissions = 0b100001;
+            fd_table[1].permissions = 0b010101;
+            fd_table[2].permissions = 0b010101;
         }
+    }
+
+    int kill(unsigned v) { return 0; }
+
+    int file_mmap(uint32_t addr, uint32_t size, int fd, uint32_t offset) {
+        FileDescriptor file = this->fd_table[fd];
+        uint8_t perm = file.permissions;
+        if (!(perm & 0b001011))
+            return 0;
+
+        Node *node = (Node *)file.node;
+        node->read_all(offset, size, (char *)addr);
+        // TODO: Probably wrong
+        return addr;
+    }
+
+    void copy_fd_table(ProcessControlBlock *parent) {
+        for (int i = 0; i < 10; i++) {
+            this->fd_table[i].node = parent->fd_table[i].node;
+            this->fd_table[i].permissions = parent->fd_table[i].permissions;
+            this->fd_table[i].offset = parent->fd_table[i].offset;
+        }
+    }
+
+    int dup(int fd) {
+        int new_fd = find_available_fd();
+        if (!(this->fd_table[fd].permissions & 0b1) || new_fd == -1)
+            return -1;
+
+        this->fd_table[new_fd].node = this->fd_table[fd].node;
+        this->fd_table[new_fd].permissions = this->fd_table[fd].permissions;
+        this->fd_table[new_fd].offset = this->fd_table[fd].offset;
+        return 0;
+    }
+
+    int pipe(int *write_fd, int *read_fd) {
+        int fd_for_write = find_available_fd();
+
+        if (fd_for_write == -1)
+            return -1;
+        this->fd_table[fd_for_write].permissions = 0b0101;
+
+        int fd_for_read = find_available_fd();
+
+        if (fd_for_read == -1) {
+            this->fd_table[fd_for_write].permissions = 0;
+            return -1;
+        }
+
+        this->fd_table[fd_for_read].permissions = 0b0011;
+
+        BoundedBuffer<void *> *bb = new BoundedBuffer<void *>(100);
+
+        this->fd_table[fd_for_write].node = (uintptr_t)bb;
+        this->fd_table[fd_for_read].node = (uintptr_t)bb;
+
+        *write_fd = fd_for_write;
+        *read_fd = fd_for_read;
+
+        return 0;
+    }
+
+    void update_path(char *path) {
+        if (path[0] == '/') {
+            this->cur_path = file_system->find_absolute(path);
+        } else {
+            this->cur_path = file_system->find_relative(this->cur_path, path);
+        }
+    }
+
+    int find_available_fd() {
+        for (int i = 3; i < 10; i++) {
+            if (!(this->fd_table[i].permissions & 0b1))
+                return i;
+        }
+        return -1;
+    }
+
+    int open(char *path) {
+        int fd = find_available_fd();
+        if (fd == -1)
+            return -1;
+
+        Node *open_fd = nullptr;
+        if (path[0] == '/') {
+            open_fd = file_system->find_absolute(path);
+        } else {
+            open_fd = file_system->find_relative(this->cur_path, path);
+        }
+
+        if (open_fd == nullptr)
+            return -1;
+
+        this->fd_table[fd].node = (uintptr_t)open_fd;
+        this->fd_table[fd].permissions =
+            0b0001 | (open_fd->is_file() << 3) | (open_fd->is_file() << 1);
+        return fd;
+    }
+
+    int close(int fd) {
+        FileDescriptor file_d = this->fd_table[fd];
+        uint8_t file_perm = file_d.permissions;
+        if (!(file_perm & 0b1001))
+            return -1;
+        file_d.permissions = 0;
+        // todo: clean up Node but Im lazy
+        return 0;
+    }
+
+    uint32_t len(int fd) {
+        FileDescriptor file_d = this->fd_table[fd];
+        uint8_t file_perm = file_d.permissions;
+        if (!(file_perm & 0b1001))
+            return -1;
+
+        return ((Node *)file_d.node)->size_in_bytes();
+    }
+
+    uint32_t read_file(uint32_t fd, void *buffer, uint32_t count) {
+        // TODO:
+        return 0;
     }
 
     VME *copy_vme(VME *old_vme) {
@@ -172,7 +320,7 @@ class ProcessControlBlock {
         VME *temp = head;
         while (temp != nullptr) {
             // Debug::printf("ADDR %x %x, SIZE %x, addr + size %x\n", temp, temp->addr, temp->size,
-                        //   temp->addr + temp->size);
+            //   temp->addr + temp->size);
             if (addr >= temp->addr && addr < temp->addr + temp->size) {
                 return true;
             }
@@ -201,7 +349,7 @@ class ProcessControlBlock {
 
         while (temp->right != nullptr) {
             // Debug::printf("temp %x right %x addr %x %x %x\n", temp, temp->right, temp->addr,
-                        //   temp->size, temp->right->addr);
+            //   temp->size, temp->right->addr);
             if (temp->right->addr - (temp->addr + temp->size) >= size) {
                 VME *next = temp->right;
                 temp->right = new VME(temp->addr + temp->size, size, temp, next);
@@ -221,7 +369,8 @@ class ProcessControlBlock {
     }
 
     bool add_new_VME(uint32_t addr, uint32_t size) {
-        // Debug::printf("adding new VMe %x %x %x cur process %x\n", addr, size, addr+size, SMP::me());
+        // Debug::printf("adding new VMe %x %x %x cur process %x\n", addr, size, addr+size,
+        // SMP::me());
         if (head == nullptr) {
             head = new VME(addr, size);
             // Debug::printf("inserted %x\n", head);
@@ -393,7 +542,6 @@ class ProcessControlBlock {
 
     void store_registers(uint32_t pc, uint32_t esp, uint32_t *user_registers) {
         if (this->is_in_sig_handler) {
-            // Debug::printf("sig handler storing\n");
             sig_registers[0] = pc;
             sig_registers[1] = user_registers[7]; // eax
             sig_registers[2] = user_registers[6];

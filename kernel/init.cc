@@ -138,10 +138,8 @@ extern "C" void kernelInit(void) {
 
     // Per-core virtual memory initialization
     VMM::per_core_init();
-
     // Initialize the PIT
     Pit::init();
-
     auto id = SMP::me();
 
     Debug::printf("| initializing TSS for %d\n",id);
@@ -151,9 +149,10 @@ extern "C" void kernelInit(void) {
 
     Debug::printf("| %d enabling interrupts, I'm scared\n",id);
     sti();
-
+    Debug::printf("sti\n");
     auto myOrder = howManyAreHere.add_fetch(1);
     if (myOrder == kConfig.totalProcs) {
+        Debug::printf("main\n");
         auto f = kernelMain();
         f.get([](int v) {
             Debug::shutdown();

@@ -2,9 +2,10 @@
 #define _SYS_H_
 
 class SYS {
-public:
+  public:
     static void init(void);
     static void do_exit(int rc);
 };
 
+void sigreturn();
 #endif
