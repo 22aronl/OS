@@ -183,8 +183,8 @@ switchToUserWithParams:
         mov %eax, -8(%ebx)
         mov 16(%esp), %eax      # arg2
         mov %eax, -4(%ebx)
-        mov 0xF0002000, %eax 
-        mov %eax, (%ebx) #return address false
+        mov $0xF0002000, %eax
+        mov %eax, -12(%ebx) #return address false
         sub $12, %ebx
 
         pushl userSS            # user SS

@@ -11,12 +11,14 @@
 #include "stdint.h"
 // #include "vmm.h"
 
+class ProcessControlBlock;
+
 class ChildrenExitCode {
   public:
-    Future<uint32_t> *future;
+    ProcessControlBlock *future;
     ChildrenExitCode *next;
-    ChildrenExitCode(Future<uint32_t> *future) : future(future), next(nullptr) {}
-    ChildrenExitCode(Future<uint32_t> *future, ChildrenExitCode *next)
+    ChildrenExitCode(ProcessControlBlock *future) : future(future), next(nullptr) {}
+    ChildrenExitCode(ProcessControlBlock *future, ChildrenExitCode *next)
         : future(future), next(next) {}
 };
 
@@ -104,13 +106,15 @@ class ProcessControlBlock {
     FileDescriptor fd_table[10];
     Node *cur_path;
     bool is_kill;
+    bool is_first_kill; // first time entering store handler
+    uint32_t kill_message;
 
     ProcessControlBlock(uint32_t vmm_pd, ProcessControlBlock *parent)
         : vmm_pd(vmm_pd), parent(parent), children(nullptr), sig_handler(0),
-          is_in_sig_handler(false), is_kill(false) {
+          is_in_sig_handler(false), is_kill(false), is_first_kill(false) {
         exit_code = new Future<uint32_t>();
         if (parent != nullptr) {
-            parent->add_child(exit_code);
+            parent->add_child(this);
             this->sem_holder = copy_sem_parent(parent);
             this->sem_index = parent->sem_index;
             this->head = copy_vme(parent->head);
@@ -133,7 +137,15 @@ class ProcessControlBlock {
         }
     }
 
-    int kill(unsigned v) { return 0; }
+    int kill_child(uint32_t v) {
+        if (this->children == nullptr || this->children->future->is_kill) {
+            return -1;
+        }
+        this->kill_message = v;
+        this->is_kill = true;
+        this->is_first_kill = true;
+        return 0;
+    }
 
     int file_mmap(uint32_t addr, uint32_t size, int fd, uint32_t offset) {
         FileDescriptor file = this->fd_table[fd];
@@ -568,6 +580,13 @@ class ProcessControlBlock {
 
     void return_to_process(uint32_t eax) {
         // Debug::printf("returning process sig %d\n", this->is_in_sig_handler);
+        if (this->is_first_kill) {
+            this->is_first_kill = false;
+            this->is_in_sig_handler = true;
+            uint32_t sig_pc = this->sig_handler;
+            switchToUserWithParams(sig_pc, registers[6] - 128, 2, this->kill_message);
+        }
+
         if (this->is_in_sig_handler) {
             return_to_process_(eax, sig_registers);
             Debug::panic("*** THIS SHOULD NOT OUTPUT\n");
@@ -591,7 +610,7 @@ class ProcessControlBlock {
         // Debug::printf("end set exit\n");
     }
 
-    void add_child(Future<uint32_t> *future) {
+    void add_child(ProcessControlBlock *future) {
         if (this->children == nullptr) {
             this->children = new ChildrenExitCode(future);
         } else {
@@ -602,7 +621,7 @@ class ProcessControlBlock {
     Future<uint32_t> *get_child() {
         ChildrenExitCode *cur = this->children;
         this->children = this->children->next;
-        Future<uint32_t> *fut = cur->future;
+        Future<uint32_t> *fut = cur->future->exit_code;
         delete cur;
         return fut;
     }

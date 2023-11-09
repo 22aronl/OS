@@ -227,9 +227,9 @@ void per_core_init() { // wait till global init is done
 } // namespace VMM
 
 extern "C" void vmm_pageFault(uintptr_t va_, uintptr_t *saveState) {
-    // Debug::printf("can't handle page fault at %x\n", va_);
-    // Debug::printf("page table %d pc %x\n", VMM::pcb_table[SMP::me()]->sig_handler,
-    // saveState[10]);
+    Debug::printf("can't handle page fault at %x\n", va_);
+    Debug::printf("page table %d pc %x\n", VMM::pcb_table[SMP::me()]->sig_handler,
+    saveState[10]);
 
     // for (uint32_t i = 0; i < 11; i++) {
     //     Debug::printf("vmm %d val %x\n", i, saveState[i]);

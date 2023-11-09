@@ -391,7 +391,8 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         return VMM::pcb_table[SMP::me()]->pipe(write_fd, read_fd);
     }
     case 1027: { // int kill(unsigned v)
-        Debug::panic("*** KILL NOT IMPLMENTEd\n");
+        uint32_t v = userEsp[1];
+        return VMM::pcb_table[SMP::me()]->kill_child(v);
     }
     case 1028: { // int dup(int fd)
         int fd = userEsp[1];
