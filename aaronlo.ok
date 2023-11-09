@@ -1,0 +1,6 @@
+*** signal 1 0x80402000
+*** NO SIGRETURN
+*** did it work? 666
+*** kill command
+*** signal 2 0xa
+*** success

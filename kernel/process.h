@@ -141,9 +141,9 @@ class ProcessControlBlock {
         if (this->children == nullptr || this->children->future->is_kill) {
             return -1;
         }
-        this->kill_message = v;
-        this->is_kill = true;
-        this->is_first_kill = true;
+        this->children->future->kill_message = v;
+        this->children->future->is_kill = true;
+        this->children->future->is_first_kill = true;
         return 0;
     }
 
@@ -579,7 +579,7 @@ class ProcessControlBlock {
     }
 
     void return_to_process(uint32_t eax) {
-        // Debug::printf("returning process sig %d\n", this->is_in_sig_handler);
+        Debug::printf("returning process sig %d\n", this->is_in_sig_handler);
         if (this->is_first_kill) {
             this->is_first_kill = false;
             this->is_in_sig_handler = true;
