@@ -579,7 +579,7 @@ class ProcessControlBlock {
     }
 
     void return_to_process(uint32_t eax) {
-        Debug::printf("returning process sig %d\n", this->is_in_sig_handler);
+        // Debug::printf("returning process sig %d\n", this->is_in_sig_handler);
         if (this->is_first_kill) {
             this->is_first_kill = false;
             this->is_in_sig_handler = true;
