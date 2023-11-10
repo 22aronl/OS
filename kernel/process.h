@@ -580,6 +580,8 @@ class ProcessControlBlock {
         }
     }
 
+    void exit_process();
+
     void return_to_process(uint32_t eax) {
         // Debug::printf("returning process sig %d\n", this->is_in_sig_handler);
         if (this->is_first_kill) {
@@ -587,7 +589,7 @@ class ProcessControlBlock {
             this->is_in_sig_handler = true;
             uint32_t sig_pc = this->sig_handler;
             if (sig_pc == 0) 
-                
+                exit_process();
             else
                 switchToUserWithParams(sig_pc, registers[6] - 128, 2, this->kill_message);
         }
