@@ -239,7 +239,7 @@ class ProcessControlBlock {
             return -1;
 
         this->fd_table[fd] = new FileDescriptor((uintptr_t)open_fd, 0b0001 | (open_fd->is_file() << 3) | (open_fd->is_file() << 1));
-        Debug::printf("open at fd %d\n", fd);
+        // Debug::printf("open at fd %d\n", fd);
         return fd;
     }
 
