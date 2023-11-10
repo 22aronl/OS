@@ -312,7 +312,7 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1020: { // void chdir(char* path)
         char *path = (char *)userEsp[1];
-        // Debug::printf("chdir %s\n", path);
+        Debug::printf("chdir %s\n", path);
         VMM::pcb_table[SMP::me()]->update_path(path);
         break;
     }
@@ -355,8 +355,6 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
             int64_t val = ((Node *)file->node)->read_all(file->offset, 1, (char *)buffer);
             file->offset += 1;
             file->lock.unlock();
-            if(val == 0)
-                return -1;
             return val;
         } else {
             ((BoundedBuffer<void *> *)file->node)->get([cur_pcb, buffer](auto v) {
@@ -374,8 +372,8 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         int fd = userEsp[1];
         void *buffer = (void *)userEsp[2];
         uint32_t count = userEsp[3];
-        // if(fd != 1)
-        //     Debug::printf("write %d\n", fd);
+        if(fd != 1)
+            Debug::printf("write %d\n", fd);
 
         auto cur_pcb = VMM::pcb_table[SMP::me()];
         FileDescriptor* file = cur_pcb->fd_table[fd];

@@ -176,7 +176,7 @@ class ProcessControlBlock {
             return -1;
 
         this->fd_table[new_fd] = this->fd_table[fd];
-        return 0;
+        return new_fd;
     }
 
     int pipe(int *write_fd, int *read_fd) {
@@ -239,7 +239,7 @@ class ProcessControlBlock {
             return -1;
 
         this->fd_table[fd] = new FileDescriptor((uintptr_t)open_fd, 0b0001 | (open_fd->is_file() << 3) | (open_fd->is_file() << 1));
-
+        Debug::printf("open at fd %d\n", fd);
         return fd;
     }
 
@@ -263,7 +263,8 @@ class ProcessControlBlock {
         if(file_d == nullptr)
             return -1;
         uint8_t file_perm = file_d->permissions;
-        if (!(file_perm & 0b1001))
+        // Debug::printf("permission %d\n")
+        if ((file_perm & 0b1001) != 0b1001)
             return -1;
 
         return ((Node *)file_d->node)->size_in_bytes();

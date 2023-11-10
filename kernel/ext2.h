@@ -193,18 +193,18 @@ class Ext2 {
     //
     // Panics if "dir" is not a directory
     Node *find(Node *dir, const char *name) {
-        // Debug::printf("finds %s\n", name);
+        Debug::printf("finds %s\n", name);
         uint32_t number = dir->find(name);
         if (number == 0) {
             return nullptr;
         } else {
-            // Debug::printf("found %s at %d\n",name,number);
+            Debug::printf("found %s at %d\n",name,number);
             return get_node(number);
         }
     }
 
     Node *find_relative(Node *dir, char *name) {
-        // Debug::printf("finding relative %s\n", name);
+        Debug::printf("finding relative %s\n", name);
         if (dir == nullptr) {
             return nullptr;
         }
@@ -220,12 +220,17 @@ class Ext2 {
         while (name[len] != '\0' && name[len] != '/')
             len++;
 
+        if(len == 0) {
+            return find_relative(dir, name + len + 1);
+        }
+        
         if (name[len] == '\0') {
             return find(dir, name);
         }
 
         name[len] = '\0';
-        // Debug::printf("file name %s\n", name);
+
+        Debug::printf("file name %s\n", name);
         return find_relative(find(dir, name), name + len + 1);
     }
 
