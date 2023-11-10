@@ -139,8 +139,8 @@ void Node::read_dir() {
         char *name = new char[name_len + 1];
         memcpy(name, buffer + offset + 8, name_len);
         name[name_len] = '\0';
-        //Debug::printf("Node %s, %ld, %ld, %ld, %ld, %ld, %ld\n", name, inode, rec_len, name_len,
-                      //offset, total, size);
+        // Debug::printf("Node %s, %ld, %ld, %ld, %ld, %ld, %ld\n", name, inode, rec_len, name_len,
+                    //   offset, total, size);
         ext2_dir *dir = new ext2_dir{inode, rec_len, name_len, file_type, name, nullptr};
 
         if (this->dir_entries == nullptr) {
@@ -181,6 +181,7 @@ uint32_t Node::find(const char *name) {
     }
     ext2_dir *cur = this->dir_entries;
     while (cur != nullptr) {
+        // Debug::printf("current %s compare %s\n", cur->name, name);
         if (compare_name(cur->name, name)) {
             return cur->inode;
         }

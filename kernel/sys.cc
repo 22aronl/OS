@@ -312,6 +312,7 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1020: { // void chdir(char* path)
         char *path = (char *)userEsp[1];
+        // Debug::printf("chdir %s\n", path);
         VMM::pcb_table[SMP::me()]->update_path(path);
         break;
     }
@@ -328,14 +329,16 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         return VMM::pcb_table[SMP::me()]->len(fd);
     }
     case 1024: { // int n = read(fd, void* buffer, unsigned count)
-        // Debug::printf("reading\n");
         int fd = userEsp[1];
         void *buffer = (void *)userEsp[2];
         uint32_t count = userEsp[3];
+        // Debug::printf("reading %d\n", fd);
 
         auto cur_pcb = VMM::pcb_table[SMP::me()];
-        FileDescriptor& file = cur_pcb->fd_table[fd];
-        uint8_t perm = file.permissions;
+        FileDescriptor* file = cur_pcb->fd_table[fd];
+        if(file == nullptr)
+            return -1;
+        uint8_t perm = file->permissions;
         // Debug::printf("[permission %d %d %x %x %d %d\n", perm, perm & 0b11, (uint32_t)buffer, (uint32_t)buffer + count, in_userspace((uint32_t)buffer), in_userspace((uint32_t)buffer + count));
         if ((perm & 0b11)!=0b11 || !in_userspace((uint32_t)buffer) ||
             !in_userspace((uint32_t)buffer + count))
@@ -347,11 +350,16 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         if (perm & 0b1000) { // if is file
             // Debug::printf("permiision\n");
             // Debug::printf("offset %d buffer %x\n", file.offset, buffer);
-            int64_t val = ((Node *)file.node)->read_all(file.offset, 1, (char *)buffer);
-            file.offset += 1;
+            // Debug::printf("offset %d num %d\n", file.offset, ((Node *)file.node)->size_in_bytes());
+            file->lock.lock();
+            int64_t val = ((Node *)file->node)->read_all(file->offset, 1, (char *)buffer);
+            file->offset += 1;
+            file->lock.unlock();
+            if(val == 0)
+                return -1;
             return val;
         } else {
-            ((BoundedBuffer<void *> *)file.node)->get([cur_pcb, buffer](auto v) {
+            ((BoundedBuffer<void *> *)file->node)->get([cur_pcb, buffer](auto v) {
                 VMM::pcb_table[SMP::me()] = cur_pcb;
                 vmm_on(cur_pcb->vmm_pd);
                 ((void **)buffer)[0] = v;
@@ -363,14 +371,17 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1:
     case 1025: { // int n = write(fd, void* buffer, unsigned count)
-        // Debug::printf("write\n");
         int fd = userEsp[1];
         void *buffer = (void *)userEsp[2];
         uint32_t count = userEsp[3];
+        // if(fd != 1)
+        //     Debug::printf("write %d\n", fd);
 
         auto cur_pcb = VMM::pcb_table[SMP::me()];
-        FileDescriptor& file = cur_pcb->fd_table[fd];
-        uint8_t perm = file.permissions;
+        FileDescriptor* file = cur_pcb->fd_table[fd];
+        if(file == nullptr)
+            return -1;
+        uint8_t perm = file->permissions;
         // Debug::printf("permission %d\n", perm);
         if ((perm & 0b101)!=0b101 || !in_userspace((uint32_t)buffer) ||
             !in_userspace((uint32_t)buffer + count))
@@ -392,7 +403,7 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
             // Debug::printf("wr\n");
             // ((BoundedBuffer<void *> *)file.node)->put((((void **)userEsp[2])[0]), [](){});
             cur_pcb->store_registers(userEip[0], userEip[3], userRegs);
-            ((BoundedBuffer<void *> *)file.node)->put((((void **)userEsp[2])[0]), [cur_pcb]() {
+            ((BoundedBuffer<void *> *)file->node)->put((((void **)userEsp[2])[0]), [cur_pcb]() {
                 // Debug::printf("putting return\n");
                 VMM::pcb_table[SMP::me()] = cur_pcb;
                 vmm_on(cur_pcb->vmm_pd);

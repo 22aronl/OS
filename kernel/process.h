@@ -79,11 +79,13 @@ class VME {
 
 class FileDescriptor {
   public:
+    SpinLock lock;
     uint8_t permissions; // is_input[5], is_output[4], is_file [3], is_writable [2], is_readable
                          // [1], is_valid[0]
     uintptr_t node;
     uint32_t offset;
     FileDescriptor() : permissions(0), node(0), offset(0) {}
+    FileDescriptor(uint8_t permissions) : permissions(permissions), node(0), offset(0) {}
     FileDescriptor(uintptr_t node, uint8_t permissions)
         : permissions(permissions), node(node), offset(0) {}
 };
@@ -103,7 +105,7 @@ class ProcessControlBlock {
     uint32_t sem_index;
     VME *head;
     Node *current_node;
-    FileDescriptor fd_table[10];
+    FileDescriptor* fd_table[10];
     Node *cur_path;
     bool is_kill;
     bool is_first_kill; // first time entering store handler
@@ -131,9 +133,12 @@ class ProcessControlBlock {
             if (file_system != nullptr)
                 this->cur_path = file_system->root;
 
-            fd_table[0].permissions = 0b100001;
-            fd_table[1].permissions = 0b010101;
-            fd_table[2].permissions = 0b010101;
+            fd_table[0] = new FileDescriptor(0b100001);
+            fd_table[1] = new FileDescriptor(0b010101);
+            fd_table[2] = new FileDescriptor(0b010101);
+            for(int i = 3; i < 10; i++) {
+                fd_table[i] = nullptr;
+            }
         }
     }
 
@@ -148,12 +153,12 @@ class ProcessControlBlock {
     }
 
     int file_mmap(uint32_t addr, uint32_t size, int fd, uint32_t offset) {
-        FileDescriptor file = this->fd_table[fd];
-        uint8_t perm = file.permissions;
+        FileDescriptor* file = this->fd_table[fd];
+        uint8_t perm = file->permissions;
         if (!(perm & 0b001011))
             return 0;
 
-        Node *node = (Node *)file.node;
+        Node *node = (Node *)file->node;
         node->read_all(offset, size, (char *)addr);
         // TODO: Probably wrong
         return addr;
@@ -161,20 +166,16 @@ class ProcessControlBlock {
 
     void copy_fd_table(ProcessControlBlock *parent) {
         for (int i = 0; i < 10; i++) {
-            this->fd_table[i].node = parent->fd_table[i].node;
-            this->fd_table[i].permissions = parent->fd_table[i].permissions;
-            this->fd_table[i].offset = parent->fd_table[i].offset;
+            this->fd_table[i] = parent->fd_table[i];
         }
     }
 
     int dup(int fd) {
         int new_fd = find_available_fd();
-        if (!(this->fd_table[fd].permissions & 0b1) || new_fd == -1)
+        if ((this->fd_table[fd] == nullptr) || new_fd == -1)
             return -1;
 
-        this->fd_table[new_fd].node = this->fd_table[fd].node;
-        this->fd_table[new_fd].permissions = this->fd_table[fd].permissions;
-        this->fd_table[new_fd].offset = this->fd_table[fd].offset;
+        this->fd_table[new_fd] = this->fd_table[fd];
         return 0;
     }
 
@@ -183,21 +184,22 @@ class ProcessControlBlock {
 
         if (fd_for_write == -1)
             return -1;
-        this->fd_table[fd_for_write].permissions = 0b0101;
+        this->fd_table[fd_for_write] = new FileDescriptor(0b0101);
 
         int fd_for_read = find_available_fd();
 
         if (fd_for_read == -1) {
-            this->fd_table[fd_for_write].permissions = 0;
+            delete this->fd_table[fd_for_write];
+            this->fd_table[fd_for_write] = nullptr;
             return -1;
         }
 
-        this->fd_table[fd_for_read].permissions = 0b0011;
 
         BoundedBuffer<void *> *bb = new BoundedBuffer<void *>(100);
 
-        this->fd_table[fd_for_write].node = (uintptr_t)bb;
-        this->fd_table[fd_for_read].node = (uintptr_t)bb;
+        this->fd_table[fd_for_write]->node = (uintptr_t)bb;
+
+        this->fd_table[fd_for_read] = new FileDescriptor((uintptr_t)bb, 0b0011);
 
         *write_fd = fd_for_write;
         *read_fd = fd_for_read;
@@ -214,8 +216,8 @@ class ProcessControlBlock {
     }
 
     int find_available_fd() {
-        for (int i = 3; i < 10; i++) {
-            if (!(this->fd_table[i].permissions & 0b1))
+        for (int i = 0; i < 10; i++) {
+            if (this->fd_table[i] == nullptr)
                 return i;
         }
         return -1;
@@ -236,31 +238,35 @@ class ProcessControlBlock {
         if (open_fd == nullptr)
             return -1;
 
-        this->fd_table[fd].node = (uintptr_t)open_fd;
-        this->fd_table[fd].permissions =
-            0b0001 | (open_fd->is_file() << 3) | (open_fd->is_file() << 1);
+        this->fd_table[fd] = new FileDescriptor((uintptr_t)open_fd, 0b0001 | (open_fd->is_file() << 3) | (open_fd->is_file() << 1));
+
         return fd;
     }
 
     int close(int fd) {
         if (fd < 0 || fd > 9)
             return -1;
-        FileDescriptor& file_d = this->fd_table[fd];
-        uint8_t file_perm = file_d.permissions;
+        FileDescriptor* file_d = this->fd_table[fd];
+        if(file_d == nullptr)
+            return -1;
+        uint8_t file_perm = file_d->permissions;
         if (!(file_perm & 0b1001))
             return -1;
-        file_d.permissions = 0;
+        // file_d.permissions = 0;
+        this->fd_table[fd] = nullptr;
         // todo: clean up Node but Im lazy
         return 0;
     }
 
     uint32_t len(int fd) {
-        FileDescriptor file_d = this->fd_table[fd];
-        uint8_t file_perm = file_d.permissions;
+        FileDescriptor* file_d = this->fd_table[fd];
+        if(file_d == nullptr)
+            return -1;
+        uint8_t file_perm = file_d->permissions;
         if (!(file_perm & 0b1001))
             return -1;
 
-        return ((Node *)file_d.node)->size_in_bytes();
+        return ((Node *)file_d->node)->size_in_bytes();
     }
 
     VME *copy_vme(VME *old_vme) {

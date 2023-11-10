@@ -34,7 +34,7 @@ public:
     template <typename Work>
     void put(T v, const Work& work) {
         s2.down([this, v, work] {
-            //Debug::printf("putting at index %d\n", tail.get());
+            // Debug::printf("putting %d at index %d\n", v, tail.get());
             uint32_t t = tail.fetch_add(1);
             buffer[t % size] = v;
             s1.up();
@@ -50,9 +50,9 @@ public:
     template <typename Work>
     void get(const Work& work) {
         s1.down([this, work] {
-            //Debug::printf("grabbing from %d\n", head.get());
             uint32_t h = head.fetch_add(1);
             T v = buffer[h % size];
+            // Debug::printf("grabbing %d from %d\n", v, head.get());
             //head.set((head.get() + 1) % size);
             s2.up();
             impl::ready_queue.add(new impl::EventWithWorkArg(work, v));
