@@ -1,6 +1,10 @@
 #include "libc.h"
 
 extern unsigned _end;
+
+// This test case tests kill for both a handle case and a non handle case.
+
+
 #define LONG_LOOP 10000
 
 void handler(int signum, unsigned arg) {
@@ -21,13 +25,33 @@ void handler(int signum, unsigned arg) {
 
         for(int i = 0; i < LONG_LOOP; i++) { //try to force preemption in kernel
             yield();
-            printf("time slow %d\n", i);
+            printf("time slow %d\n", i); //to not clog up the out file
         }
         exit(100);
     }
 }
 
 int main(int argc, char** argv) {
+
+    printf("*** testing no signal handler kill\n");
+    int id1 = fork();
+
+    if(id1 < 0) {
+        shutdown();
+    } else if(id1 == 0) {
+        while(1) {}
+    } else {
+        kill(101);
+        int j = join();
+
+        if(j != 101) {
+            printf("*** kill does not work %d\n", j);
+            shutdown();
+        }
+    }
+
+    printf("*** starting next test\n");
+
     simple_signal(handler); //normal simple signal handler
     unsigned p = (unsigned) &_end;
     p = p + 4096;

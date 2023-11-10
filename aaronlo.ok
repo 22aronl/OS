@@ -1,3 +1,5 @@
+*** testing no signal handler kill
+*** starting next test
 *** signal 1 0x80402000
 *** NO SIGRETURN
 *** did it work? 666

@@ -243,6 +243,8 @@ class ProcessControlBlock {
     }
 
     int close(int fd) {
+        if (fd > 9)
+            return -1;
         FileDescriptor file_d = this->fd_table[fd];
         uint8_t file_perm = file_d.permissions;
         if (!(file_perm & 0b1001))
@@ -584,7 +586,10 @@ class ProcessControlBlock {
             this->is_first_kill = false;
             this->is_in_sig_handler = true;
             uint32_t sig_pc = this->sig_handler;
-            switchToUserWithParams(sig_pc, registers[6] - 128, 2, this->kill_message);
+            if (sig_pc == 0) 
+                
+            else
+                switchToUserWithParams(sig_pc, registers[6] - 128, 2, this->kill_message);
         }
 
         if (this->is_in_sig_handler) {
