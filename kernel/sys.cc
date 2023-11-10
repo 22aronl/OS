@@ -53,17 +53,16 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     case 0:
         exit(userEsp);
         break;
-    case 1:
-        if (userEsp[1] == 1) {
-            if (!in_userspace(userEsp[2]))
-                return -1;
-            for (uint32_t i = 0; i < userEsp[3]; i++)
-                Debug::printf("%c", ((char *)userEsp[2])[i]);
-            return userEsp[3];
-        } else {
-            Debug::panic("*** unknown write syscall %d\n", userEsp[1]);
-        }
-        break;
+        // if (userEsp[1] == 1) {
+        //     if (!in_userspace(userEsp[2]))
+        //         return -1;
+        //     for (uint32_t i = 0; i < userEsp[3]; i++)
+        //         Debug::printf("%c", ((char *)userEsp[2])[i]);
+        //     return userEsp[3];
+        // } else {
+        //     Debug::panic("*** unknown write syscall %d\n", userEsp[1]);
+        // }
+        // break;
     case 2: {
         // TODO: transfer over registers
         // copy over vmm & physmem
@@ -329,21 +328,25 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         return VMM::pcb_table[SMP::me()]->len(fd);
     }
     case 1024: { // int n = read(fd, void* buffer, unsigned count)
+        // Debug::printf("reading\n");
         int fd = userEsp[1];
         void *buffer = (void *)userEsp[2];
         uint32_t count = userEsp[3];
 
         auto cur_pcb = VMM::pcb_table[SMP::me()];
-        FileDescriptor file = cur_pcb->fd_table[fd];
+        FileDescriptor& file = cur_pcb->fd_table[fd];
         uint8_t perm = file.permissions;
-        if (!(perm & 0b11) || in_userspace((uint32_t)buffer) ||
-            in_userspace((uint32_t)buffer + count))
+        // Debug::printf("[permission %d %d %x %x %d %d\n", perm, perm & 0b11, (uint32_t)buffer, (uint32_t)buffer + count, in_userspace((uint32_t)buffer), in_userspace((uint32_t)buffer + count));
+        if ((perm & 0b11)!=0b11 || !in_userspace((uint32_t)buffer) ||
+            !in_userspace((uint32_t)buffer + count))
             return -1;
-
+        // Debug::printf("storing regs\n");
         cur_pcb->store_registers(userEip[0], userEip[3], userRegs);
-
+        // cur_pcb->store_registers(0, userEip[3], userRegs);
         // TODO: add segfault handler case in user for buffer in VMM seg handler
         if (perm & 0b1000) { // if is file
+            // Debug::printf("permiision\n");
+            // Debug::printf("offset %d buffer %x\n", file.offset, buffer);
             int64_t val = ((Node *)file.node)->read_all(file.offset, 1, (char *)buffer);
             file.offset += 1;
             return val;
@@ -358,31 +361,46 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
             // return -1;
         }
     }
+    case 1:
     case 1025: { // int n = write(fd, void* buffer, unsigned count)
+        // Debug::printf("write\n");
         int fd = userEsp[1];
         void *buffer = (void *)userEsp[2];
         uint32_t count = userEsp[3];
 
         auto cur_pcb = VMM::pcb_table[SMP::me()];
-        FileDescriptor file = cur_pcb->fd_table[fd];
+        FileDescriptor& file = cur_pcb->fd_table[fd];
         uint8_t perm = file.permissions;
-        if (!(perm & 0b101) || in_userspace((uint32_t)buffer) ||
-            in_userspace((uint32_t)buffer + count))
+        // Debug::printf("permission %d\n", perm);
+        if ((perm & 0b101)!=0b101 || !in_userspace((uint32_t)buffer) ||
+            !in_userspace((uint32_t)buffer + count))
             return -1;
 
         if (count == 0)
             return 0;
 
         if (perm & 0b010000) {
-            Debug::printf("%c", ((char *)userEsp[2])[0]);
-            return 1;
+            // Debug::printf("perm %s\n", (char *)userEsp[2]);
+            // Debug::printf("%c", ((char *)userEsp[2])[0]);
+            if (!in_userspace(userEsp[2]))
+                return -1;
+            for (uint32_t i = 0; i < userEsp[3]; i++)
+                Debug::printf("%c", ((char *)userEsp[2])[i]);
+            return userEsp[3];
+            // return 1;
         } else {
+            // Debug::printf("wr\n");
+            // ((BoundedBuffer<void *> *)file.node)->put((((void **)userEsp[2])[0]), [](){});
+            cur_pcb->store_registers(userEip[0], userEip[3], userRegs);
             ((BoundedBuffer<void *> *)file.node)->put((((void **)userEsp[2])[0]), [cur_pcb]() {
+                // Debug::printf("putting return\n");
                 VMM::pcb_table[SMP::me()] = cur_pcb;
                 vmm_on(cur_pcb->vmm_pd);
+                // Debug::printf("not these\n");
                 cur_pcb->return_to_process(1);
             });
             event_loop();
+            return 1;
         }
     }
     case 1026: { // int rc = pipe(int* write_fd, int* read_fd)

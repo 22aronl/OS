@@ -243,9 +243,9 @@ class ProcessControlBlock {
     }
 
     int close(int fd) {
-        if (fd > 9)
+        if (fd < 0 || fd > 9)
             return -1;
-        FileDescriptor file_d = this->fd_table[fd];
+        FileDescriptor& file_d = this->fd_table[fd];
         uint8_t file_perm = file_d.permissions;
         if (!(file_perm & 0b1001))
             return -1;
@@ -261,11 +261,6 @@ class ProcessControlBlock {
             return -1;
 
         return ((Node *)file_d.node)->size_in_bytes();
-    }
-
-    uint32_t read_file(uint32_t fd, void *buffer, uint32_t count) {
-        // TODO:
-        return 0;
     }
 
     VME *copy_vme(VME *old_vme) {
