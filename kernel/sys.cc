@@ -321,6 +321,7 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1020: { // void chdir(char* path)
         char *path = (char *)userEsp[1];
+        Debug::printf("chdir loc %x\n", userEsp[1]);
         Debug::printf("chdir %s\n", path);
         Debug::printf("ch %d %d\n", path[0], path[1]);
         VMM::pcb_table[SMP::me()]->update_path(path);
@@ -435,6 +436,7 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1027: { // int kill(unsigned v)
         uint32_t v = userEsp[1];
+        // Debug::printf("kill\n");
         return VMM::pcb_table[SMP::me()]->kill_child(v);
     }
     case 1028: { // int dup(int fd)

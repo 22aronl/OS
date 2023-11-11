@@ -105,11 +105,12 @@ class ProcessControlBlock {
     uint32_t sem_index;
     VME *head;
     Node *current_node;
-    FileDescriptor* fd_table[10];
+    FileDescriptor *fd_table[10];
     Node *cur_path;
     bool is_kill;
     bool is_first_kill; // first time entering store handler
     uint32_t kill_message;
+    // SpinLock add_child_lock;
 
     ProcessControlBlock(uint32_t vmm_pd, ProcessControlBlock *parent)
         : vmm_pd(vmm_pd), parent(parent), children(nullptr), sig_handler(0),
@@ -136,7 +137,7 @@ class ProcessControlBlock {
             fd_table[0] = new FileDescriptor(0b100001);
             fd_table[1] = new FileDescriptor(0b010101);
             fd_table[2] = new FileDescriptor(0b010101);
-            for(int i = 3; i < 10; i++) {
+            for (int i = 3; i < 10; i++) {
                 fd_table[i] = nullptr;
             }
         }
@@ -153,7 +154,7 @@ class ProcessControlBlock {
     }
 
     int file_mmap(uint32_t addr, uint32_t size, int fd, uint32_t offset) {
-        FileDescriptor* file = this->fd_table[fd];
+        FileDescriptor *file = this->fd_table[fd];
         uint8_t perm = file->permissions;
         if ((perm & 0b001011) != 0b001011)
             return 0;
@@ -193,7 +194,6 @@ class ProcessControlBlock {
             this->fd_table[fd_for_write] = nullptr;
             return -1;
         }
-
 
         BoundedBuffer<char> *bb = new BoundedBuffer<char>(100);
 
@@ -243,7 +243,8 @@ class ProcessControlBlock {
         if (open_fd == nullptr)
             return -1;
 
-        this->fd_table[fd] = new FileDescriptor((uintptr_t)open_fd, 0b0001 | (open_fd->is_file() << 3) | (open_fd->is_file() << 1));
+        this->fd_table[fd] = new FileDescriptor(
+            (uintptr_t)open_fd, 0b0001 | (open_fd->is_file() << 3) | (open_fd->is_file() << 1));
         Debug::printf("open at fd %d\n", fd);
         return fd;
     }
@@ -252,8 +253,8 @@ class ProcessControlBlock {
         Debug::printf("close %d\n", fd);
         if (fd < 0 || fd > 9)
             return -1;
-        FileDescriptor* file_d = this->fd_table[fd];
-        if(file_d == nullptr)
+        FileDescriptor *file_d = this->fd_table[fd];
+        if (file_d == nullptr)
             return -1;
         uint8_t file_perm = file_d->permissions;
         if (!(file_perm & 0b1001))
@@ -265,8 +266,8 @@ class ProcessControlBlock {
     }
 
     uint32_t len(int fd) {
-        FileDescriptor* file_d = this->fd_table[fd];
-        if(file_d == nullptr)
+        FileDescriptor *file_d = this->fd_table[fd];
+        if (file_d == nullptr)
             return -1;
         uint8_t file_perm = file_d->permissions;
         // Debug::printf("permission %d\n")
@@ -596,10 +597,11 @@ class ProcessControlBlock {
             this->is_first_kill = false;
             this->is_in_sig_handler = true;
             uint32_t sig_pc = this->sig_handler;
-            if (sig_pc == 0) 
+            if (sig_pc == 0) {
                 exit_process();
-            else
+            } else {
                 switchToUserWithParams(sig_pc, registers[6] - 128, 2, this->kill_message);
+            }
         }
 
         if (this->is_in_sig_handler) {
@@ -626,18 +628,23 @@ class ProcessControlBlock {
     }
 
     void add_child(ProcessControlBlock *future) {
+        // add_child_lock.lock();
+        Debug::printf("adding child\n");
         if (this->children == nullptr) {
             this->children = new ChildrenExitCode(future);
         } else {
             this->children = new ChildrenExitCode(future, this->children);
         }
+        // add_child_lock.unlock();
     }
 
     Future<uint32_t> *get_child() {
+        // add_child_lock.lock();
         ChildrenExitCode *cur = this->children;
         this->children = this->children->next;
         Future<uint32_t> *fut = cur->future->exit_code;
         delete cur;
+        // add_child_lock.unlock();
         return fut;
     }
 };
