@@ -155,7 +155,7 @@ class ProcessControlBlock {
     int file_mmap(uint32_t addr, uint32_t size, int fd, uint32_t offset) {
         FileDescriptor* file = this->fd_table[fd];
         uint8_t perm = file->permissions;
-        if (!(perm & 0b001011))
+        if ((perm & 0b001011) != 0b001011)
             return 0;
 
         Node *node = (Node *)file->node;
@@ -195,7 +195,7 @@ class ProcessControlBlock {
         }
 
 
-        BoundedBuffer<void *> *bb = new BoundedBuffer<void *>(100);
+        BoundedBuffer<char> *bb = new BoundedBuffer<char>(100);
 
         this->fd_table[fd_for_write]->node = (uintptr_t)bb;
 
@@ -208,11 +208,13 @@ class ProcessControlBlock {
     }
 
     void update_path(char *path) {
+        Debug::printf("path %s\n", path);
         if (path[0] == '/') {
             this->cur_path = file_system->find_absolute(path);
         } else {
             this->cur_path = file_system->find_relative(this->cur_path, path);
         }
+        Debug::printf("returned updated path %x %d\n", this->cur_path);
     }
 
     int find_available_fd() {
@@ -224,6 +226,7 @@ class ProcessControlBlock {
     }
 
     int open(char *path) {
+        Debug::printf("open path %s\n", path);
         int fd = find_available_fd();
         if (fd == -1)
             return -1;
@@ -235,15 +238,18 @@ class ProcessControlBlock {
             open_fd = file_system->find_relative(this->cur_path, path);
         }
 
+        Debug::printf("open fd node %x\n", open_fd);
+
         if (open_fd == nullptr)
             return -1;
 
         this->fd_table[fd] = new FileDescriptor((uintptr_t)open_fd, 0b0001 | (open_fd->is_file() << 3) | (open_fd->is_file() << 1));
-        // Debug::printf("open at fd %d\n", fd);
+        Debug::printf("open at fd %d\n", fd);
         return fd;
     }
 
     int close(int fd) {
+        Debug::printf("close %d\n", fd);
         if (fd < 0 || fd > 9)
             return -1;
         FileDescriptor* file_d = this->fd_table[fd];
@@ -426,8 +432,8 @@ class ProcessControlBlock {
             //     Debug::printf("node %x %x %x\n", temp->addr, temp->size, temp->right);
             //     temp = temp->right;
             // }
-
-            // Debug::printf("ending add\n");
+            Debug::printf("node %x %x\n", addr, size);
+            Debug::printf("ending add\n");
             return true;
         }
     }

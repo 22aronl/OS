@@ -129,12 +129,12 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1000: {
         // Debug::printf("EXECLING\n");
-        Node* node;
-        if(((char*)userEsp[1])[0] == '/')
+        Node *node;
+        if (((char *)userEsp[1])[0] == '/')
             node = file_system->find_absolute((char *)userEsp[1]);
         else
-            node = file_system->find_relative(VMM::pcb_table[SMP::me()]->cur_path, (char *)userEsp[1]);
-
+            node =
+                file_system->find_relative(VMM::pcb_table[SMP::me()]->cur_path, (char *)userEsp[1]);
 
         if (node == nullptr || !node->is_file())
             return -1;
@@ -257,32 +257,41 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         break;
     }
     case 1005: { // void* simple_mmap(void* addr, unsigned size)
-        // Debug::printf("simple mmap\n");
         uint32_t addr = userEsp[1];
         uint32_t size = userEsp[2];
         int fd = userEsp[3];
         uint32_t offset = userEsp[4];
+        // Debug::printf("simple mmap %x %x %d %d\n", addr, size, fd, offset);
+
+        if (fd != -1 && VMM::pcb_table[SMP::me()]->fd_table[fd] == nullptr) {
+            return 0;
+        }
 
         if (addr == 0) {
             if ((size & 0xFFF) != 0 || size > 0xF0000000 - 0x80000000 || size == 0)
                 return 0;
             addr = VMM::pcb_table[SMP::me()]->find_space_VME(size);
+
+            if (fd == -1)
+                return addr;
             // Debug::printf("space foudn at %x\n", k);
+        } else {
+            // Debug::printf("addr %x size %x addr + size %x\n", addr, size, addr + size);
+            if ((addr & 0xFFF) != 0 || (size & 0xFFF) != 0 || addr + size > 0xF0000000 ||
+                (addr + size < 0x80000000))
+                return 0;
+
+            if (!VMM::pcb_table[SMP::me()]->add_new_VME(addr, size))
+                return 0;
+
+            if (fd == -1)
+                return addr;
         }
-        // Debug::printf("addr %x size %x addr + size %x\n", addr, size, addr + size);
-        if ((addr & 0xFFF) != 0 || (size & 0xFFF) != 0 || addr + size > 0xF0000000 ||
-            (addr + size < 0x80000000))
-            return 0;
 
-        if (!VMM::pcb_table[SMP::me()]->add_new_VME(addr, size))
+        if ((offset & 0xFFF) != 0) {
             return 0;
-        
-        if(fd == -1)
-            return addr;
-            
-        if ((offset & 0xFFF) != 0)
-            return 0;
-
+        }
+        Debug::printf("mmap in\n");
         return VMM::pcb_table[SMP::me()]->file_mmap(addr, size, fd, offset);
 
         break;
@@ -313,6 +322,7 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     case 1020: { // void chdir(char* path)
         char *path = (char *)userEsp[1];
         Debug::printf("chdir %s\n", path);
+        Debug::printf("ch %d %d\n", path[0], path[1]);
         VMM::pcb_table[SMP::me()]->update_path(path);
         break;
     }
@@ -330,17 +340,19 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1024: { // int n = read(fd, void* buffer, unsigned count)
         int fd = userEsp[1];
-        void *buffer = (void *)userEsp[2];
+        char *buffer = (char *)userEsp[2];
         uint32_t count = userEsp[3];
-        // Debug::printf("reading %d\n", fd);
+        // Debug::printf("reading %d %x\n", fd, buffer);
 
         auto cur_pcb = VMM::pcb_table[SMP::me()];
-        FileDescriptor* file = cur_pcb->fd_table[fd];
-        if(file == nullptr)
+        FileDescriptor *file = cur_pcb->fd_table[fd];
+        if (file == nullptr)
             return -1;
         uint8_t perm = file->permissions;
-        // Debug::printf("[permission %d %d %x %x %d %d\n", perm, perm & 0b11, (uint32_t)buffer, (uint32_t)buffer + count, in_userspace((uint32_t)buffer), in_userspace((uint32_t)buffer + count));
-        if ((perm & 0b11)!=0b11 || !in_userspace((uint32_t)buffer) ||
+        // Debug::printf("[permission %d %d %x %x %d %d\n", perm, perm & 0b11, (uint32_t)buffer,
+        //   (uint32_t)buffer + count, in_userspace((uint32_t)buffer),
+        //   in_userspace((uint32_t)buffer + count));
+        if ((perm & 0b11) != 0b11 || !in_userspace((uint32_t)buffer) ||
             !in_userspace((uint32_t)buffer + count))
             return -1;
         // Debug::printf("storing regs\n");
@@ -350,17 +362,21 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
         if (perm & 0b1000) { // if is file
             // Debug::printf("permiision\n");
             // Debug::printf("offset %d buffer %x\n", file.offset, buffer);
-            // Debug::printf("offset %d num %d\n", file.offset, ((Node *)file.node)->size_in_bytes());
+            // Debug::printf("offset %d num %d\n", file.offset, ((Node
+            // *)file.node)->size_in_bytes());
             file->lock.lock();
             int64_t val = ((Node *)file->node)->read_all(file->offset, 1, (char *)buffer);
             file->offset += 1;
             file->lock.unlock();
+            // Debug::printf("read %d\n", val);
+            if(val == -1)
+                return 0;
             return val;
         } else {
-            ((BoundedBuffer<void *> *)file->node)->get([cur_pcb, buffer](auto v) {
+            ((BoundedBuffer<char> *)file->node)->get([cur_pcb, buffer](auto v) {
                 VMM::pcb_table[SMP::me()] = cur_pcb;
                 vmm_on(cur_pcb->vmm_pd);
-                ((void **)buffer)[0] = v;
+                buffer[0] = static_cast<char>(v);
                 cur_pcb->return_to_process(1);
             });
             event_loop();
@@ -370,18 +386,18 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     case 1:
     case 1025: { // int n = write(fd, void* buffer, unsigned count)
         int fd = userEsp[1];
-        void *buffer = (void *)userEsp[2];
+        char *buffer = (char *)userEsp[2];
         uint32_t count = userEsp[3];
         // if(fd != 1)
-        //     Debug::printf("write %d\n", fd);
+        //     Debug::printf("write %d %x\n", fd, buffer);
 
         auto cur_pcb = VMM::pcb_table[SMP::me()];
-        FileDescriptor* file = cur_pcb->fd_table[fd];
-        if(file == nullptr)
+        FileDescriptor *file = cur_pcb->fd_table[fd];
+        if (file == nullptr)
             return -1;
         uint8_t perm = file->permissions;
         // Debug::printf("permission %d\n", perm);
-        if ((perm & 0b101)!=0b101 || !in_userspace((uint32_t)buffer) ||
+        if ((perm & 0b101) != 0b101 || !in_userspace((uint32_t)buffer) ||
             !in_userspace((uint32_t)buffer + count))
             return -1;
 
@@ -401,7 +417,7 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
             // Debug::printf("wr\n");
             // ((BoundedBuffer<void *> *)file.node)->put((((void **)userEsp[2])[0]), [](){});
             cur_pcb->store_registers(userEip[0], userEip[3], userRegs);
-            ((BoundedBuffer<void *> *)file->node)->put((((void **)userEsp[2])[0]), [cur_pcb]() {
+            ((BoundedBuffer<char> *)file->node)->put((buffer[0]), [cur_pcb]() {
                 // Debug::printf("putting return\n");
                 VMM::pcb_table[SMP::me()] = cur_pcb;
                 vmm_on(cur_pcb->vmm_pd);

@@ -204,7 +204,7 @@ class Ext2 {
     }
 
     Node *find_relative(Node *dir, char *name) {
-        // Debug::printf("finding relative %s\n", name);
+        Debug::printf("finding relative %s %x\n", name, dir);
         if (dir == nullptr) {
             return nullptr;
         }
@@ -230,7 +230,7 @@ class Ext2 {
 
         name[len] = '\0';
 
-        // Debug::printf("file name %s\n", name);
+        Debug::printf("file name %s\n", name);
         return find_relative(find(dir, name), name + len + 1);
     }
 
@@ -240,6 +240,7 @@ class Ext2 {
             n[i] = name[i];
         Node *node = find_relative(root, n + 1);
         delete[] n;
+        Debug::printf("found absolute %x\n", node);
         return node;
     }
 };
