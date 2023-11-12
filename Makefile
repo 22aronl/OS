@@ -28,9 +28,9 @@ GIT_SERVER=${shell echo ${ORIGIN_URL} | sed -e 's/:.*//'}
 # customize by setting environment variables
 QEMU_ACCEL ?= tcg,thread=multi
 QEMU_CPU ?= max
-QEMU_SMP ?= 1
+QEMU_SMP ?= 4
 QEMU_MEM ?= 128m
-QEMU_TIMEOUT ?= 5
+QEMU_TIMEOUT ?= 10
 QEMU_TIMEOUT_CMD ?= timeout
 
 QEMU_PREFER = ~gheith/public/qemu_5.1.0/bin/qemu-system-i386
@@ -192,7 +192,7 @@ ${TEST_TARGETS} : %.test : Makefile %.result
 
 OTHER_USERS = ${shell who | sed -e 's/ .*//' | sort | uniq}
 HOW_MANY = ${shell who | sed -e 's/ .*//' | sort | uniq | wc -l}
-LOOP_LIMIT ?= 10
+LOOP_LIMIT ?= 100
 
 loop_warning.%:
 	@echo "*******************************************************************************"

@@ -321,9 +321,10 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
     }
     case 1020: { // void chdir(char* path)
         char *path = (char *)userEsp[1];
-        Debug::printf("chdir loc %x\n", userEsp[1]);
-        Debug::printf("chdir %s\n", path);
-        Debug::printf("ch %d %d\n", path[0], path[1]);
+        if (path[0] == 0) {
+            path[0] = '/';
+            path[1] = 0;
+        }
         VMM::pcb_table[SMP::me()]->update_path(path);
         break;
     }
@@ -370,7 +371,7 @@ extern "C" int sysHandler(uint32_t eax, uint32_t *frame) {
             file->offset += 1;
             file->lock.unlock();
             // Debug::printf("read %d\n", val);
-            if(val == -1)
+            if (val == -1)
                 return 0;
             return val;
         } else {
