@@ -1,3 +1,8 @@
 
 - Propose a design for implementing copy-on-write shared mappings
 
+A design for copy-on-writing for shared mappings is that all non writes of the shared mapping will point to the correct page in the page cache.
+Since using a PMAP, we can determine how many children are sharing a certain page, allowing us to know if that page is shared or private. Upon 
+a page fault to attempt to write to our read only page (and once we determine its a shared page), we copy that page to a new mapping (with write 
+premissiosn) and update the pmap. We set the correct information corerctly, and we have COW shared mappings. Just when we need to Copy (but not write) it, we'll 
+update the mapping to shared and update the mappings properly.
